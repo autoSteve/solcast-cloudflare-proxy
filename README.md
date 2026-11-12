@@ -53,6 +53,14 @@ This worker provides forecasts, estimated actuals and scheduling guidance and ca
 - `GET /proxy_status` (alias `/proxy-status`)
 - `POST /__scheduled` (internal/manual scheduler entrypoint)
 
+The proxy supports multiple API keys and learns which sites belong to each key when a client calls `GET /rooftop_sites` through the proxy for that key. It forwards the request to Solcast and stores the successful discovery response, including site metadata.
+
+Discovery alone does not activate collection or give sites an inactivity grace period; a valid site-specific resource request activates scheduled collection for that key/site pair.
+
+Either a valid downstream resource request or a successful upstream resource collection keeps that key/site pair active. Activity on forecasts or estimated actuals keeps both kinds active for that pair, without affecting other sites or keys. After 24 hours with neither kind of activity, its resource state and cached data are deleted and collection stops. Failed or malformed upstream responses do not refresh activity. Successful scheduled collections can keep a site active even if clients stop requesting it.
+
+Successful discovery refreshes the API key's discovery data but does not refresh individual sites' activity. Later successful discovery calls remove resources for sites no longer returned for that key. Keys and their discovery data expire after 24 hours without successful discovery, a valid site-specific request, or successful resource collection. Existing resource caches without a recorded client request use the last successful collection time for expiry; those with neither timestamp are removed.
+
 ### Forced cached responses
 
 Add `&force=true` to any of the three `/rooftop_sites` requests above to return the last known successful response for that API key and, where applicable, site and resource kind. This bypasses previous upstream failures, active retries, rate limiting, exhausted budgets and permanent collection failures for a read. It does not force an upstream fetch.

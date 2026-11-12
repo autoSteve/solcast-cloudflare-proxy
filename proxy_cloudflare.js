@@ -25,6 +25,7 @@ const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_RETRY_BACKOFF_SECONDS = 45;
 const DEFAULT_ENABLE_ESTIMATED_ACTUALS = "false";
 const RETRY_JITTER_MAX_SECONDS = 14;
+const RESOURCE_ACTIVITY_TTL_MS = 86400000;
 const PERIOD_RE = /^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$/;
 
 function nowUtc() {
@@ -811,6 +812,7 @@ function scheduleConfigKey(env) {
 function defaultState() {
     return {
         accounts: {},
+        account_last_requested_at: {},
         discovery_payloads: {},
         resources: {},
         retry: newRetryState(),
@@ -958,6 +960,7 @@ export class ProxyCoordinator {
         if (!data.accounts || typeof data.accounts !== "object") {
             data.accounts = {};
         }
+        data.account_last_requested_at ||= {};
         if (!data.discovery_payloads || typeof data.discovery_payloads !== "object") {
             data.discovery_payloads = {};
         }
@@ -1008,17 +1011,48 @@ export class ProxyCoordinator {
             changed = true;
         }
 
-        for (const site of sites) {
-            for (const kind of [FORECAST_KIND, ACTUALS_KIND]) {
-                const rid = resourceId(apiKey, site, kind);
-                if (!data.resources[rid]) {
-                    data.resources[rid] = newResourceState(apiKey, site, kind);
-                    changed = true;
-                }
+        return changed;
+    }
+
+    async expireInactiveSites(data, now = nowUtc()) {
+        let changed = false;
+        const siteActivity = new Map();
+        const accountActivity = new Map();
+        for (const resource of Object.values(data.resources)) {
+            const activityAt = Math.max(
+                fromIso(resource.last_requested_at)?.getTime() || 0,
+                fromIso(resource.last_success_at)?.getTime() || 0,
+            );
+            const siteKey = resourceId(resource.api_key, resource.site, "");
+            siteActivity.set(siteKey, Math.max(siteActivity.get(siteKey) || 0, activityAt));
+            accountActivity.set(resource.api_key, Math.max(accountActivity.get(resource.api_key) || 0, activityAt));
+        }
+        for (const [rid, resource] of Object.entries(data.resources)) {
+            const activityAt = siteActivity.get(resourceId(resource.api_key, resource.site, ""));
+            if (!activityAt || now.getTime() - activityAt >= RESOURCE_ACTIVITY_TTL_MS) {
+                delete data.resources[rid];
+                changed = true;
             }
         }
-
-        return changed;
+        for (const apiKey of Object.keys(data.accounts)) {
+            const activityAt = Math.max(
+                fromIso(data.account_last_requested_at[apiKey])?.getTime() || 0,
+                accountActivity.get(apiKey) || 0,
+            );
+            if (!activityAt || now.getTime() - activityAt >= RESOURCE_ACTIVITY_TTL_MS) {
+                delete data.accounts[apiKey];
+                delete data.discovery_payloads[apiKey];
+                delete data.account_last_requested_at[apiKey];
+                changed = true;
+            }
+        }
+        if (changed) {
+            if (data.retry.active && !Object.values(data.resources).some((resource) => resource.retrying && data.retry.kinds.includes(resource.kind))) {
+                data.retry = newRetryState();
+                await this.state.storage.deleteAlarm();
+            }
+            await this.save(data);
+        }
     }
 
     async discover(apiKey) {
@@ -1055,6 +1089,7 @@ export class ProxyCoordinator {
         const data = await this.load();
         await this.registerSites(data, apiKey, sites);
         data.discovery_payloads[apiKey] = payload;
+        data.account_last_requested_at[apiKey] = iso(nowUtc());
         await this.save(data);
         return { status, payload, detail };
     }
@@ -1177,6 +1212,7 @@ export class ProxyCoordinator {
 
     async runCollectionCycle(kindFilter = null) {
         const data = await this.load();
+        await this.expireInactiveSites(data);
         const retry = data.retry && typeof data.retry === "object" ? { ...data.retry } : newRetryState();
 
         const kinds = new Set(retry.active ? (retry.kinds || []) : []);
@@ -1360,18 +1396,35 @@ export class ProxyCoordinator {
                     "cache-control": "no-store",
                 });
             }
-            const discovered = await this.discover(apiKey);
-            if (discovered.status !== 200) {
-                if (discovered.payload !== null && discovered.payload !== undefined) {
-                    return jsonResponse(discovered.payload, discovered.status, baseHeaders);
+            if (!stateData.accounts[apiKey]?.includes(siteId)) {
+                const discovered = await this.discover(apiKey);
+                if (discovered.status !== 200) {
+                    if (discovered.payload !== null && discovered.payload !== undefined) {
+                        return jsonResponse(discovered.payload, discovered.status, baseHeaders);
+                    }
+                    return new Response(discovered.detail || "", { status: discovered.status, headers: baseHeaders });
                 }
-                return new Response(discovered.detail || "", { status: discovered.status, headers: baseHeaders });
+                stateData = await this.load();
             }
-            stateData = await this.load();
-            resource = stateData.resources[rid];
-            if (!resource) {
+            if (!stateData.accounts[apiKey]?.includes(siteId)) {
                 return jsonResponse({ error: "Unknown rooftop site for this account" }, 404, baseHeaders);
             }
+            for (const resourceKind of [FORECAST_KIND, ACTUALS_KIND]) {
+                const resourceKey = resourceId(apiKey, siteId, resourceKind);
+                stateData.resources[resourceKey] = newResourceState(apiKey, siteId, resourceKind);
+            }
+            resource = stateData.resources[rid];
+        }
+
+        const requestedAt = iso(nowUtc());
+        if (resource.last_requested_at !== requestedAt) {
+            for (const peer of Object.values(stateData.resources)) {
+                if (peer.api_key === apiKey && peer.site === siteId) {
+                    peer.last_requested_at = requestedAt;
+                }
+            }
+            stateData.account_last_requested_at[apiKey] = requestedAt;
+            await this.save(stateData);
         }
 
         const cached = force && !resource.payload ? resource.last_success_cache : resource;
@@ -1419,6 +1472,7 @@ export class ProxyCoordinator {
 
     async rebuildScheduleIfNeeded(now = nowUtc()) {
         const data = await this.load();
+        await this.expireInactiveSites(data, now);
         const dayUtc = dayUtcString(now);
         const configKey = scheduleConfigKey(this.env);
 
