@@ -57,12 +57,16 @@ Add `&force=true` to any of the three `/rooftop_sites` requests above to return 
 
 - `force` is a proxy-only parameter, and is never forwarded upstream.
 - Bare `force` and the values `true`, `1`, `yes` and `on` enable it; values are case-insensitive. Omitted `force`, `false`, `0`, `no`, `off` and unrecognised values retain normal behaviour.
-- Forced sites discovery uses the persisted successful site list, but does attempt to get fresher data from Solcast; it returns cached data even if the upsteam call fails. An empty successful site list is valid.
+- Forced sites discovery uses the persisted successful site list, but does attempt to get fresher data from Solcast; it returns cached data even if the upstream call fails. An empty successful site list is valid.
 - Forced forecasts and estimated actuals still validate `format=json` and positive `hours`, and apply the normal current-time window filtering. Old cached data can therefore produce an empty array; `force` does not make expired data current.
 - With no successful response cached, the proxy returns HTTP `503`.
-- Collection/retry headers remain truthful, even with HTTP `200`: inspect `x-proxy-last-success-at`, `x-proxy-upstream-status` and `x-proxy-last-fetch-status` to assess freshness and collection failures.
+- Collection/retry headers remain true to present state, even with HTTP `200`: inspect `x-proxy-last-success-at`, `x-proxy-upstream-status` and `x-proxy-last-fetch-status` to assess freshness and collection failures.
 
 ## Example `wrangler.toml`
+
+Cloudflare workers are deployed using wrangler being installed on a remote system like a laptop, with the JavaScript code in the same folder as the `wrangler.toml`. All files in that folder generally get packaged up in the upload compressed package, so keep that folder slim.
+
+This is an example configuration.
 
 ```toml
 name = "solcast-proxy"
@@ -126,7 +130,7 @@ Once the worker is deployed at Cloudflare it will take approximately five minute
 
 ## Local simulator workflow
 
-This repo includes a local launcher that wires Wrangler HTTPS to the simulator certificate and emulates cron locally. To run the JavaScript proxy under wrangler it must be mounted at /workspaces/homeAssistant-core/tests/components/solcast_solar/proxy_js or copied there. The `.gitignore` file for the Solcast integration ignores its presence at that spcific location.
+For development purposes, this repo includes a local launcher that wires Wrangler HTTPS to the Solcast Solar integration simulator certificate and emulates the per-minute cron locally. To run the JavaScript proxy under wrangler it must be mounted at /workspaces/homeAssistant-core/tests/components/solcast_solar/proxy_js or copied there. The `.gitignore` file for the Solcast integration ignores its presence at that spcific location.
 
 ### 0) Set-up in the dev. container if required
 
@@ -147,12 +151,16 @@ wrangler --version
 
 ### 1) Start the simulator
 
+In a discrete zsh shell.
+
 ```bash
 cd /workspaces/homeAssistant-core/tests/components/solcast_solar
 python -u wsgi_sim.py --limit 5000 --port 8443 --use-guidance --bomb429 10-12
 ```
 
 ### 2) Validate simulator trust (optional)
+
+In another zsh shell.
 
 ```bash
 cd /workspaces/homeAssistant-core/tests/components/solcast_solar/proxy_js
@@ -161,6 +169,8 @@ python run_proxy_js.py --check-only
 
 ### 3) Launch local JS proxy
 
+In that same shell.
+
 ```bash
 cd /workspaces/homeAssistant-core/tests/components/solcast_solar/proxy_js
 python run_proxy_js.py
@@ -168,7 +178,7 @@ python run_proxy_js.py
 
 What `run_proxy_js.py` does:
 
-- Verifies simulator TLS using its live in-memory certificate.
+- Verifies simulator TLS using its live in-memory certificate. It expects the simulator at TCP 8443.
 - Starts `wrangler dev` with HTTPS on `127.0.0.1:9443`.
 - Primes discovery for default accounts (`1`, `2`) unless overridden with `--api-key`.
 - Dispatches one immediate `__scheduled` tick.
@@ -185,6 +195,8 @@ node --test proxy_cloudflare.test.mjs
 ```
 
 ### Local (`wrangler dev`)
+
+In yet another zsh shell.
 
 ```bash
 BASE_URL="https://127.0.0.1:9443"
@@ -205,6 +217,8 @@ curl -k --get --data-urlencode 'cron=* * * * *' "$BASE_URL/__scheduled"
 
 ### Cloud (`workers.dev`)
 
+If testing against a Cloudflare deployment...
+
 ```bash
 BASE_URL="https://<worker>.<subdomain>.workers.dev"
 API_KEY="<solcast-api-key>"
@@ -215,7 +229,7 @@ curl -sS -D - "$BASE_URL/rooftop_sites?format=json&api_key=$API_KEY" -o /dev/nul
 
 ## Home Assistant integration notes
 
-- For local dev (`https://127.0.0.1:9443`), Wrangler uses a development certificate; set integration `ssl_verify` to `false` unless that cert is explicitly trusted, which it won't be.
+- For local dev (`https://127.0.0.1:9443`), Wrangler uses a development certificate; set integration `ssl_verify` to `false` unless that cert is explicitly trusted, which it won't be, so set it in `solcast-advanced.json`.
 - `x-proxy-poll-delay-seconds` behaviour:
   - `cron` mode: fixed from `POLL_DELAY_SECONDS`.
   - `daylight`/`all_day`: adaptive from observed tick timing, floored by `POLL_DELAY_MIN_SECONDS`.
