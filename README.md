@@ -2,7 +2,7 @@
 
 This is a JavaScript Cloudflare Worker proxy for the Solcast Solar hobbyist API.
 
-It is compatible with the Home Assistant custom component integration Solcast Solar, which is available via the Marketplace for 3rd party components. See the [ADVOPTIONS.md](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md) file there.
+It is compatible with the Home Assistant custom component integration Solcast Solar, which is available via the Marketplace for 3rd party components. See the [ADVOPTIONS.md](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md) file there. The minimum supportable version of the Solcast Solar integration is v4.7.0, with specific proxied capabilities added in that release to match this repository reference implementation.
 
 This worker provides forecasts, estimated actuals and scheduling guidance and cached resource serving, and allows multiple consumers to utilise a small number of hobbyist API calls for more than one API consumer.
 
