@@ -130,7 +130,7 @@ Once the worker is deployed at Cloudflare it will take approximately five minute
 
 ## Local simulator workflow
 
-For development purposes, this repo includes a local launcher that wires Wrangler HTTPS to the Solcast Solar integration simulator certificate and emulates the per-minute cron locally. To run the JavaScript proxy under wrangler it must be mounted at /workspaces/homeAssistant-core/tests/components/solcast_solar/proxy_js or copied there. The `.gitignore` file for the Solcast integration ignores its presence at that spcific location.
+For development purposes, this repo includes a local launcher that wires Wrangler HTTPS to the Solcast Solar integration simulator certificate and emulates the per-minute cron locally. To run the JavaScript proxy under wrangler it can be mounted at /workspaces/homeAssistant-core/tests/components/solcast_solar/proxy_js or copied there. The `.gitignore` file for the Solcast integration ignores its presence at a `proxy_js` location.
 
 ### 0) Set-up in the dev. container if required
 
