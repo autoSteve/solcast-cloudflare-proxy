@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+      - name: Build release archive
+        run: |
+          archive_name="solcast-cloudflare-proxy-${RELEASE_TAG//\//-}.zip"
+          zip "$archive_name" proxy_cloudflare.js README.md wrangler.toml LICENSE
+          printf 'ARCHIVE_NAME=%s\n' "$archive_name" >> "$GITHUB_ENV"
+      - name: Upload release archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" "$ARCHIVE_NAME" --clobber
