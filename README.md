@@ -89,6 +89,8 @@ Add `&force=true` to any of the three `/rooftop_sites` requests above to return 
 - With no successful response cached, the proxy returns HTTP `503`.
 - Collection/retry headers remain true to present state, even with HTTP `200`: inspect `x-proxy-last-success-at`, `x-proxy-upstream-status` and `x-proxy-last-fetch-status` to assess freshness and collection failures.
 
+The Home Assistant Solcast Solar integration _never_ utilises the `force` parameter, with it favouring situational awareness and lock-step behaviour over receiving potentially out-of-date information; it caches the latest forecasts and sites data so it does not need this mechanism. Your other scripts and code may need it.
+
 ## Example `wrangler.toml`
 
 Cloudflare workers are deployed using wrangler being installed on a remote system like a laptop, with the JavaScript code in the same folder as the `wrangler.toml`. All files in that folder generally get packaged up in the upload compressed package, so keep that folder slim.
