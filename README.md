@@ -24,7 +24,7 @@ This worker provides forecasts, estimated actuals and scheduling guidance and ca
   - `cron`
   - `daylight`
   - `all_day`
-- Daily schedule rebuild at UTC midnight.
+- Daily schedule rebuild on the first cron tick of the new UTC day, independently of integration requests.
 - Discovery-backed site registration and stale-site cleanup.
 - Forecast collection is always scheduled; estimated-actuals collection is optional and disabled by default.
 - Home Assistant integration retry model is lock-step: one retryable failure puts participating resources into coordinated retry where they follow the retry advice.
@@ -137,6 +137,8 @@ invocation_logs = true
 ## Deployment
 
 Once the worker is deployed at Cloudflare it will take approximately five minutes for the per-minute cron schedule to begin firing. With worker observability logs enabled the first every-minute `* * * * *` will eventually show up, and it is at this point that things like schedules are created for all-day and daylight scheduling options. The Home Assistant integration (or anything else) should not be configured to use the proxy until this first cron execution has occurred.
+
+The per-minute cron rebuilds the schedule on its first tick after UTC midnight and continues collection without integration requests. Cloudflare may dispatch that tick partway through the minute.
 
 ## Local simulator workflow
 

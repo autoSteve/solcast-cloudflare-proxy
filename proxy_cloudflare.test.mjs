@@ -39,6 +39,9 @@ async function harness(t, envOverrides = {}) {
         request(path, query = "") {
             return worker.fetch(new Request(`https://proxy.test${path}?api_key=1&format=json${query}`), env);
         },
+        tick() {
+            return worker.scheduled({ cron: "* * * * *" }, env);
+        },
         async register(payload = DISCOVERY) {
             replies.push({ status: 200, payload });
             assert.equal((await this.request("/rooftop_sites")).status, 200);
@@ -66,6 +69,33 @@ async function assertReadOnly(h, action, upstreamCalls = 0) {
     assert.equal(h.upstream.mock.callCount(), calls + upstreamCalls);
     return result;
 }
+
+test("daylight schedule rolls over and collects via cron without daily client requests", async (t) => {
+    const h = await harness(t, {
+        SCHEDULE_MODE: "daylight", LATITUDE: "-33.856784", LONGITUDE: "151.215297",
+        TIMEZONE: "Australia/Sydney", UPDATE_DIVISIONS: "9",
+    });
+    await h.register();
+    const previous = structuredClone((await h.coordinator.load()).schedule);
+    t.mock.timers.tick(12 * 3600000 + 46000);
+    h.reload();
+    await h.tick();
+    const rebuilt = structuredClone((await h.coordinator.load()).schedule);
+    assert.equal(rebuilt.dayUtc, "2026-11-13");
+    assert.equal(rebuilt.builtAt, "2026-11-13T00:00:46.000Z");
+    assert.notEqual(rebuilt.builtAt, previous.builtAt);
+    assert.equal(rebuilt.forecastTimesUtc.length, 9);
+    assert.equal(h.upstream.mock.callCount(), 1);
+    assert.equal((await h.request("/proxy_schedule")).status, 204);
+    assert.deepEqual((await h.coordinator.load()).schedule, rebuilt);
+    const collectionAt = Date.parse(rebuilt.nextForecastAt) + 46000;
+    assert.ok(collectionAt > Date.now());
+    t.mock.timers.tick(collectionAt - Date.now());
+    h.replies.push({ status: 200, payload: payloadFor("forecasts") });
+    await h.tick();
+    assert.equal(h.upstream.mock.callCount(), 2);
+    assert.equal((await h.coordinator.load()).resources[`1|${SITE}|forecasts`].last_success_at, new Date().toISOString());
+});
 
 test("discovery alone does not activate resource collection", async (t) => {
     const h = await harness(t);
