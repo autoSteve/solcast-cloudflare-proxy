@@ -30,6 +30,23 @@ This worker provides forecasts, estimated actuals and scheduling guidance and ca
 - Home Assistant integration retry model is lock-step: one retryable failure puts participating resources into coordinated retry where they follow the retry advice.
 - While retry is active, scheduled tick collection is suppressed and retries are handled by the Durable Object alarm.
 
+## Switching between direct API access and the proxy
+
+**TL;DR:** Deploy the proxy whenever convenient, but coordinate when it starts collecting with when the integration stops calling Solcast directly. Switching does not create fresh API quota. If the remaining quota is uncertain, stop the old collector before UTC midnight and start the replacement after the reset. When returning to direct access, stop the proxy's upstream collection first: disconnecting the integration does not stop the proxy. Scheduling consistency for the Home Assistant integration and proxy might matter during the switch, with daylight scheduling very close to the integration sunrise to sunset scheduling.
+
+The integration persists its own API usage counters and resets daily usage at UTC midnight, not local midnight. These counters are local bookkeeping, not a live Solcast account balance, and they are not transferred to or synchronised with the Worker. The proxy does not know how many calls were already made directly, and the integration cannot account for every upstream call made independently by the proxy. Repeated cache reads do not result in upstream calls. Keep the integration's existing usage files.
+
+### Direct access to proxy
+
+1. Deploy and configure the Worker, allowing for the number of sites, API keys and enabled resource kinds when choosing its collection schedule. Wait until its per-minute cron is visibly firing before switching the integration. A fresh deployment with no activated sites does not collect forecasts merely because cron is running; discovery alone does not activate collection either.
+2. Stop direct collection by every consumer that will share the proxy's API key, then change the integration's advanced Solcast URL and port settings to the proxy endpoint as described in the integration's [advanced options](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md). Keep the same API key and existing caches, and reload the integration. Discovery and valid site-resource requests register and activate its sites; the integration loads the proxy schedule on startup. A new proxy has no forecast cache until its first successful scheduled collection, so immediate data availability is not guaranteed.
+3. If switching during a UTC day, allow for calls already made directly plus the proxy's remaining collections. The integration's existing local usage count may also prevent further fetches until its reset. Switching just after the UTC reset is simpler, but not mandatory when you know there is enough remaining quota. Scheduling should adjust. Check `/proxy_status` and the integration logs rather than forcing extra updates to test the transition.
+
+### Proxy to direct access
+
+1. Stop upstream proxy collection for the API key before restoring direct access. This includes scheduled cron collection and any pending alarm-driven retries; removing cron alone does not cancel an existing retry alarm. Coordinate with other proxy consumers if they share the key. Simply changing the integration URL back, removing a public route, or waiting for the inactivity timeout is not a reliable shutdown: successful upstream collections keep sites active without any clients.
+2. Restore the integration's default Solcast URL and port settings and reload it. Direct discovery clears proxy mode, and the integration resumes its own scheduling. Keep the existing usage counters and forecast caches, but do not assume the counters include calls the proxy made independently. For a predictable fresh daily budget, stop proxy collection before UTC midnight and resume direct collection after the reset; otherwise account for the day's upstream calls before resuming.
+
 ## Runtime controls (`wrangler.toml` `[vars]`)
 
 - `SCHEDULE_MODE`: `cron`, `daylight`, `all_day`.
