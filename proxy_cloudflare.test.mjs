@@ -203,6 +203,16 @@ test("retry-after header is honoured over local backoff", async (t) => {
     assert.equal(data.retry.attempts, 1);
     assert.ok(h.storage.alarm !== null);
     assert.ok(h.storage.alarm >= NOW + 120000);
+    assert.deepEqual(
+        console.log.mock.calls.find((entry) => entry.arguments[0] === "[proxy-js] retry scheduled")?.arguments[1],
+        {
+            nextAttemptAt: new Date(h.storage.alarm).toISOString(),
+            inSeconds: (h.storage.alarm - NOW) / 1000,
+            attempt: 2,
+            maxAttempts: 5,
+            kinds: ["forecasts"],
+        },
+    );
 });
 
 test("max attempts boundary transitions to give_up and clears alarm", async (t) => {
@@ -243,9 +253,21 @@ test("alarm only runs active retry kinds and preserves other kind state", async 
     h.replies.push({ status: 500, payload: { error: "Unavailable" } });
     await h.coordinator.collectKind("forecasts");
 
+    const scheduledAt = h.storage.alarm;
+    t.mock.timers.tick(scheduledAt - Date.now() + 1250);
     h.replies.push({ status: 200, payload: payloadFor("forecasts", 7) });
     await h.coordinator.alarm();
 
+    assert.deepEqual(
+        console.log.mock.calls.find((entry) => entry.arguments[0] === "[proxy-js] retry alarm")?.arguments[1],
+        {
+            at: new Date(scheduledAt + 1250).toISOString(),
+            scheduledAt: new Date(scheduledAt).toISOString(),
+            lateByMs: 1250,
+            attempt: 2,
+            kinds: ["forecasts"],
+        },
+    );
     const data = await h.coordinator.load();
     const forecast = data.resources[`1|${SITE}|forecasts`];
     const actuals = data.resources[`1|${SITE}|estimated_actuals`];

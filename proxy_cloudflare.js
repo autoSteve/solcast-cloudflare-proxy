@@ -1325,6 +1325,13 @@ export class ProxyCoordinator {
                     data.resources[rid] = raw;
                 }
                 await this.state.storage.setAlarm(nextRetry.getTime());
+                console.log("[proxy-js] retry scheduled", {
+                    nextAttemptAt: retry.next_attempt_at,
+                    inSeconds: Math.max(0, (nextRetry.getTime() - nowUtc().getTime()) / 1000),
+                    attempt: retry.attempts + 1,
+                    maxAttempts,
+                    kinds: retry.kinds,
+                });
                 data.retry = retry;
             }
         } else {
@@ -1805,6 +1812,14 @@ export class ProxyCoordinator {
             await this.save(data);
             return;
         }
+        const invokedAt = nowUtc();
+        console.log("[proxy-js] retry alarm", {
+            at: iso(invokedAt),
+            scheduledAt: retryState.next_attempt_at,
+            lateByMs: Math.max(0, invokedAt.getTime() - Date.parse(retryState.next_attempt_at)),
+            attempt: Number(retryState.attempts || 0) + 1,
+            kinds: retryState.kinds,
+        });
         await this.runCollectionCycle(null);
     }
 }
