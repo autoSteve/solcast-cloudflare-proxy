@@ -328,7 +328,7 @@ These are the headers that describe the adaptive schedule used for daylight and 
 - `x-proxy-poll-delay-confidence` — optional confidence signal for the adaptive scheduling estimate; not a hard gate, but a useful indicator of schedule stability.
 - `x-proxy-observed-tick-second-p90` — observed tick timing percentile used to estimate safe follow delays in adaptive scheduling.
 - `x-proxy-schedule-day-utc` — the currently active UTC schedule day in the proxy.
-- `x-proxy-forecast-times-utc` — comma-separated forecast collection times in UTC.
+- `x-proxy-forecast-times-utc` — comma-separated forecast collection times in UTC as 'hh:mm' with _no_ seconds. (The seconds are adaptively worked out from the poll delay, which might mean the integration ends up fetching in the minute after the proxy, but still closely following it.)
 - `x-proxy-estimated-actuals-times-utc` — comma-separated estimated-actuals collection times in UTC.
 
 > In other words: `cron` mode is driven by the cron headers and fixed delay, while `daylight` and `all_day` are driven by the time-slot and adaptive polling headers rather than a fixed cron expression.
