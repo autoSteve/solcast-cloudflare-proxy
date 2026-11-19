@@ -97,6 +97,22 @@ test("daylight schedule rolls over and collects via cron without daily client re
     assert.equal((await h.coordinator.load()).resources[`1|${SITE}|forecasts`].last_success_at, new Date().toISOString());
 });
 
+test("schedule rebuilds after poll delay configuration changes", async (t) => {
+    const h = await harness(t, { POLL_DELAY_SECONDS: "30", POLL_DELAY_MIN_SECONDS: "15" });
+    const previous = structuredClone((await h.coordinator.load()).schedule);
+
+    h.coordinator.env.POLL_DELAY_SECONDS = "45";
+    h.coordinator.env.POLL_DELAY_MIN_SECONDS = "20";
+    h.reload();
+    t.mock.timers.tick(1000);
+    await h.tick();
+
+    const rebuilt = (await h.coordinator.load()).schedule;
+    assert.notEqual(rebuilt.configKey, previous.configKey);
+    assert.notEqual(rebuilt.builtAt, previous.builtAt);
+    assert.equal((await h.request("/proxy_schedule")).headers.get("x-proxy-poll-delay-seconds"), "45");
+});
+
 test("discovery alone does not activate resource collection", async (t) => {
     const h = await harness(t);
     h.replies.push({ status: 200, payload: DISCOVERY });

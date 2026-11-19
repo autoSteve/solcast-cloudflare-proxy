@@ -9,6 +9,7 @@ const DEFAULT_FORECAST_CRONS = "30 11,0,1,2,3,4 * * *";
 const DEFAULT_ACTUALS_CRONS = "05 14 * * *";
 const DEFAULT_DIVISIONS = 9;
 const DEFAULT_POLL_DELAY_SECONDS = "30";
+const DEFAULT_POLL_DELAY_MIN_SECONDS = 15;
 const DEFAULT_ACTUALS_DELAY_MINUTES = 0;
 const MAX_ACTUALS_DELAY_MINUTES = 120;
 const DEFAULT_ACTUALS_RANDOM_MIN_OFFSET_MINUTES = 1;
@@ -796,6 +797,7 @@ function buildActualsTimes(dayUtc, env) {
 
 function scheduleConfigKey(env) {
     return JSON.stringify({
+        version: PROXY_VERSION,
         mode: String(env.SCHEDULE_MODE || DEFAULT_MODE).toLowerCase(),
         updateDivisions: String(env.UPDATE_DIVISIONS || DEFAULT_DIVISIONS),
         forecastCrons: String(env.FORECAST_CRONS || DEFAULT_FORECAST_CRONS),
@@ -806,6 +808,8 @@ function scheduleConfigKey(env) {
         timezone: String(env.TIMEZONE || DEFAULT_TIMEZONE),
         actualsDelay: String(env.ACTUALS_DELAY || DEFAULT_ACTUALS_DELAY_MINUTES),
         enableEstimatedActuals: String(env.ENABLE_ESTIMATED_ACTUALS || DEFAULT_ENABLE_ESTIMATED_ACTUALS),
+        pollDelaySeconds: String(env.POLL_DELAY_SECONDS || DEFAULT_POLL_DELAY_SECONDS),
+        pollDelayMinSeconds: String(env.POLL_DELAY_MIN_SECONDS || DEFAULT_POLL_DELAY_MIN_SECONDS),
     });
 }
 
@@ -852,7 +856,7 @@ function jsonResponse(payload, status = 200, headers = {}) {
 
 function pollingAdvice(env, telemetry) {
     const samples = telemetry?.tickSecondSamples || [];
-    const minimumDelay = Math.max(1, parseNumber(env.POLL_DELAY_MIN_SECONDS, 15));
+    const minimumDelay = Math.max(1, parseNumber(env.POLL_DELAY_MIN_SECONDS, DEFAULT_POLL_DELAY_MIN_SECONDS));
     if (!samples.length) {
         return {
             recommendedDelaySeconds: minimumDelay,

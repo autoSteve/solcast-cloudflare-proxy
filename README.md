@@ -157,7 +157,7 @@ invocation_logs = true
 
 Once the worker is deployed at Cloudflare it will take approximately five minutes for the per-minute cron schedule to begin firing. With worker observability logs enabled the first every-minute `* * * * *` will eventually show up, and it is at this point that things like schedules are created for all-day and daylight scheduling options. The Home Assistant integration (or anything else) should not be configured to use the proxy until this first cron execution has occurred.
 
-The per-minute cron rebuilds the schedule on its first tick after UTC midnight and continues collection without integration requests. Cloudflare may dispatch that tick partway through the minute.
+The per-minute cron rebuilds the schedule on its first tick after UTC midnight and continues collection without integration requests. Cloudflare may dispatch that tick partway through the minute. A normal redeploy preserves Durable Object state, but the next coordinator request rebuilds the schedule when deployment configuration changed. This includes `POLL_DELAY_SECONDS` and `POLL_DELAY_MIN_SECONDS`, so a freshly deployed `x-proxy-poll-delay-seconds` value is not paired with stale schedule metadata. The proxy version is also part of the rebuild key; bump `PROXY_VERSION` with schedule-affecting implementation changes so code-only deploys invalidate the persisted schedule.
 
 ## Local simulator workflow
 
