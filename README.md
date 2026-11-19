@@ -264,6 +264,7 @@ curl -sS -D - "$BASE_URL/rooftop_sites?format=json&api_key=$API_KEY" -o /dev/nul
 - `x-proxy-poll-delay-seconds` behaviour:
   - `cron` mode: fixed from `POLL_DELAY_SECONDS`.
   - `daylight`/`all_day`: adaptive from observed tick timing, floored by `POLL_DELAY_MIN_SECONDS`.
+  - The integration refreshes proxy schedule headers five seconds before the next proxy forecast collection so that it can do things like adjust proxy-follow timing.
 - Estimated actuals schedule behaviour:
   - `ENABLE_ESTIMATED_ACTUALS=false` (default): no estimated-actuals slots are scheduled.
   - `ENABLE_ESTIMATED_ACTUALS=true`: estimated-actuals slots are scheduled per mode (`ACTUALS_CRONS` or `ACTUALS_DELAY`).
