@@ -16,6 +16,9 @@ const DEFAULT_ACTUALS_RANDOM_MIN_OFFSET_MINUTES = 1;
 const DEFAULT_ACTUALS_RANDOM_MAX_OFFSET_MINUTES = 14;
 const DEFAULT_TIMEZONE = "UTC";
 const MAX_TICK_SECOND_SAMPLES = 180;
+const TICK_PHASE_CONFIRMATION_SAMPLES = 3;
+const TICK_PHASE_CHANGE_SECONDS = 10;
+const TICK_PHASE_CLUSTER_SPREAD_SECONDS = 2;
 const DEFAULT_SOLCAST_HOST = "api.solcast.com.au";
 const DEFAULT_SOLCAST_PORT = 443;
 const FORECAST_KIND = "forecasts";
@@ -1551,10 +1554,26 @@ export class ProxyCoordinator {
         const retryState = data.retry && typeof data.retry === "object" ? data.retry : newRetryState();
 
         const second = now.getUTCSeconds();
-        const samples = [...(data.telemetry.tickSecondSamples || []), second].slice(-MAX_TICK_SECOND_SAMPLES);
+        let samples = [...(data.telemetry.tickSecondSamples || []), second].slice(-MAX_TICK_SECOND_SAMPLES);
+        let observedCount = Number(data.telemetry.observedCount || 0) + 1;
+        const history = samples.slice(0, -TICK_PHASE_CONFIRMATION_SAMPLES);
+        const recent = samples.slice(-TICK_PHASE_CONFIRMATION_SAMPLES);
+        if (history.length >= TICK_PHASE_CONFIRMATION_SAMPLES) {
+            const previousSecond = percentile(history, 90);
+            const recentMin = Math.min(...recent);
+            const recentMax = Math.max(...recent);
+            if (
+                recentMax - recentMin <= TICK_PHASE_CLUSTER_SPREAD_SECONDS &&
+                (recentMin - previousSecond >= TICK_PHASE_CHANGE_SECONDS || previousSecond - recentMax >= TICK_PHASE_CHANGE_SECONDS)
+            ) {
+                samples = recent;
+                observedCount = recent.length;
+                console.log("[proxy-js] cron timing phase changed", { previousSecond, samples });
+            }
+        }
         data.telemetry.lastTickSecond = second;
         data.telemetry.tickSecondSamples = samples;
-        data.telemetry.observedCount = Number(data.telemetry.observedCount || 0) + 1;
+        data.telemetry.observedCount = observedCount;
 
         const forecastSeconds = uniqueSortedSeconds(data.schedule.forecastTimesSecondOfDay || []);
         const actualsSeconds = uniqueSortedSeconds(data.schedule.actualsTimesSecondOfDay || []);

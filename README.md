@@ -213,7 +213,7 @@ What `run_proxy_js.py` does:
 - Starts `wrangler dev` with HTTPS on `127.0.0.1:9443`.
 - Primes discovery for default accounts (`1`, `2`) unless overridden with `--api-key`.
 - Dispatches one immediate `__scheduled` tick.
-- Emulates configured cron triggers against `__scheduled`.
+- Emulates configured cron triggers against `__scheduled`, using one logged random delay of 0-59 seconds selected at launch and retained for every tick.
 
 Use `--simulator-port` and `--port` to override defaults.
 
@@ -311,7 +311,7 @@ These are always relevant regardless of schedule mode.
 - `x-proxy-name` / `x-proxy-version` — human-readable proxy identity and version metadata.
 - `x-proxy-status-url` — status endpoint that can be used to inspect runtime health and scheduler state.
 - `x-proxy-timezone` — schedule timezone; the integration expects UTC.
-- `x-proxy-forecast-mode` — current forecast mode (`cron`, `daylight`, or `all_day`).
+- `x-proxy-forecast-mode` — current forecast mode (`cron`, `daylight`, or `all_day`), established during discovery. Schedule refreshes retain the discovered mode and do not require this header.
 - `x-proxy-estimated-actuals-enabled: true|false` — whether scheduled estimated-actuals collection is active.
 
 #### Cron mode headers
@@ -324,6 +324,8 @@ These are the headers that matter when the proxy is following a cron-driven fore
 #### Daylight and all_day mode headers
 
 These are the headers that describe the adaptive schedule used for daylight and all-day collection. The tick statistics are emitted in every mode, but they are only materially used to drive the adaptive delay in daylight/all_day mode.
+
+Tick timing history persists across restarts. Three consecutive ticks spanning at most two seconds, all at least ten seconds away from the previous history's P90, reset the timing samples and observation count. The previous history must contain at least three samples, but may contain mixed timing phases. The reset is logged and preserves schedules, cached forecasts, usage, and retry state.
 
 - `x-proxy-poll-delay-seconds` — adaptive follow delay recommended from observed tick timing.
 - `x-proxy-poll-delay-confidence` — optional confidence signal for the adaptive scheduling estimate; not a hard gate, but a useful indicator of schedule stability.

@@ -4,9 +4,10 @@
 # ruff: noqa: T201
 
 import argparse
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import os
 from pathlib import Path
+from random import randint
 import shutil
 import socket
 import ssl
@@ -112,9 +113,11 @@ def _run_schedules(crons: list[str], port: int, stop: Event, api_keys: tuple[str
     if api_keys:
         _prime_scheduler(opener, api_keys, port, stop)
 
-    now = datetime.now(UTC)
+    offset = timedelta(seconds=randint(0, 59))
+    print(f"[local-cron:info] Using fixed cron delay of {int(offset.total_seconds())} seconds", flush=True)
+    now = datetime.now(UTC) - offset
     schedules = {cron: CronSim(cron, now) for cron in crons}
-    due = {cron: next(schedule) for cron, schedule in schedules.items()}
+    due = {cron: next(schedule) + offset for cron, schedule in schedules.items()}
 
     while due and not stop.is_set():
         delay = max(0.0, (min(due.values()) - datetime.now(UTC)).total_seconds())
@@ -137,8 +140,8 @@ def _run_schedules(crons: list[str], port: int, stop: Event, api_keys: tuple[str
                 print(f"[local-cron:info] Completed {cron}", flush=True)
 
             # Do not replay missed occurrences in a burst after a slow collection.
-            schedules[cron] = CronSim(cron, datetime.now(UTC))
-            due[cron] = next(schedules[cron])
+            schedules[cron] = CronSim(cron, datetime.now(UTC) - offset)
+            due[cron] = next(schedules[cron]) + offset
 
 
 def _launch_wrangler(

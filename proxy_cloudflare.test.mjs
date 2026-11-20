@@ -70,6 +70,42 @@ async function assertReadOnly(h, action, upstreamCalls = 0) {
     return result;
 }
 
+for (const { name, previousSecond, history, seconds, expectedSamples, expectedCount, expectedDelay } of [
+    { name: "later phase", previousSecond: 0, seconds: [33, 33, 33], expectedSamples: 3, expectedCount: 3, expectedDelay: 48 },
+    { name: "earlier phase", previousSecond: 45, seconds: [10, 10, 10], expectedSamples: 3, expectedCount: 3, expectedDelay: 25 },
+    { name: "clustered phase", previousSecond: 0, seconds: [33, 34, 32], expectedSamples: 3, expectedCount: 3, expectedDelay: 49 },
+    { name: "interrupted shift", previousSecond: 0, seconds: [33, 0, 33], expectedSamples: 180, expectedCount: 1003, expectedDelay: 15 },
+    { name: "inconsistent shift", previousSecond: 0, seconds: [33, 40, 33], expectedSamples: 180, expectedCount: 1003, expectedDelay: 15 },
+    { name: "small shift", previousSecond: 0, seconds: [3, 3, 3], expectedSamples: 180, expectedCount: 1003, expectedDelay: 15 },
+    { name: "mixed old phases", previousSecond: 47, history: [...Array(150).fill(0), ...Array(30).fill(47)], seconds: [3, 3, 3], expectedSamples: 3, expectedCount: 3, expectedDelay: 18 },
+]) {
+    test(`tick timing history handles ${name}`, async (t) => {
+        const h = await harness(t, { SCHEDULE_MODE: "all_day", TIMEZONE: "UTC" });
+        await h.tick();
+        const data = await h.coordinator.load();
+        data.telemetry = { lastTickSecond: previousSecond, tickSecondSamples: history || Array(180).fill(previousSecond), observedCount: 1000 };
+        await h.coordinator.save(data);
+        const { telemetry: oldTelemetry, schedule: oldSchedule, ...oldState } = structuredClone(data);
+
+        for (const [minute, second] of seconds.entries()) {
+            t.mock.timers.setTime(NOW + minute * 60000 + second * 1000);
+            h.reload();
+            await h.tick();
+        }
+
+        const { telemetry, schedule, ...state } = await h.coordinator.load();
+        assert.equal(telemetry.tickSecondSamples.length, expectedSamples);
+        assert.equal(telemetry.observedCount, expectedCount);
+        assert.equal(telemetry.lastTickSecond, seconds.at(-1));
+        assert.deepEqual(telemetry.tickSecondSamples.slice(-3), seconds);
+        assert.deepEqual(state, oldState);
+        assert.deepEqual(schedule.forecastTimesUtc, oldSchedule.forecastTimesUtc);
+        assert.deepEqual(schedule.forecastDone, oldSchedule.forecastDone);
+        assert.equal((await h.request("/proxy_schedule")).headers.get("x-proxy-poll-delay-seconds"), String(expectedDelay));
+        assert.equal(h.upstream.mock.callCount(), 0);
+    });
+}
+
 test("daylight schedule rolls over and collects via cron without daily client requests", async (t) => {
     const h = await harness(t, {
         SCHEDULE_MODE: "daylight", LATITUDE: "-33.856784", LONGITUDE: "151.215297",
