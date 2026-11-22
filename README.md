@@ -149,7 +149,7 @@ TIMEZONE = "Australia/Sydney"
 ENABLE_ESTIMATED_ACTUALS = "true"
 
 # Minutes after local midnight for estimated actuals collection when using daylight/all_day mode.
-# Proxy also adds a daily randomized +1..14 minute (and seconds) offset to mirror integration behaviour.
+# Proxy adds a daily randomized +1..14 minute offset.
 ACTUALS_DELAY = "0"
 
 # Poll delay behaviour:

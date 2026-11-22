@@ -131,6 +131,38 @@ for (const { name, exceptions, additional } of [
     });
 }
 
+for (const mode of ["daylight", "all_day"]) {
+    test(`${mode} actuals collect in the advertised minute before the proxy-follow read`, async (t) => {
+        const h = await harness(t, {
+            SCHEDULE_MODE: mode, LATITUDE: "-37.8136", LONGITUDE: "144.9631",
+            TIMEZONE: "Australia/Melbourne", UPDATE_DIVISIONS: "8",
+            ENABLE_ESTIMATED_ACTUALS: "true", ACTUALS_DELAY: "0",
+        });
+        t.mock.timers.setTime(Date.parse("2026-11-22T13:00:00Z"));
+        const data = await h.coordinator.rebuildScheduleIfNeeded();
+        assert.equal(data.schedule.actualsTimesSecondOfDay.length, 1);
+        const [actualsSecond] = data.schedule.actualsTimesSecondOfDay;
+        assert.equal(actualsSecond % 60, 0);
+        const midnight = Date.parse(`${data.schedule.dayUtc}T00:00:00Z`);
+        const advertisedAt = Date.parse(`${data.schedule.dayUtc}T${data.schedule.actualsTimesUtc[0]}:00Z`);
+        assert.equal(advertisedAt, midnight + actualsSecond * 1000);
+
+        h.replies.push({ status: 200, payload: DISCOVERY });
+        assert.equal((await h.request("/rooftop_sites")).status, 200);
+        t.mock.timers.setTime(advertisedAt + 13000);
+        h.replies.push({ status: 200, payload: payloadFor("estimated_actuals") });
+        await h.tick();
+        assert.equal(data.resources[`1|${SITE}|estimated_actuals`].last_success_at, new Date().toISOString());
+
+        const headers = (await h.request("/schedule")).headers;
+        assert.equal(headers.get("x-proxy-estimated-actuals-times-utc"), data.schedule.actualsTimesUtc[0]);
+        assert.equal(headers.get("x-proxy-poll-delay-seconds"), "28");
+        t.mock.timers.setTime(advertisedAt + 28000);
+        assert.equal((await h.request(`/rooftop_sites/${SITE}/estimated_actuals`, "&hours=168")).status, 200);
+        assert.equal(h.upstream.mock.callCount(), 2);
+    });
+}
+
 test("forecast exception triggers collection without changing the actuals schedule", async (t) => {
     const h = await harness(t, {
         FORECAST_CRONS: "0 13 * * *", ACTUALS_CRONS: "0 14 * * *",

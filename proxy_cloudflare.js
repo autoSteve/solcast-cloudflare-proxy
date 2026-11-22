@@ -458,8 +458,7 @@ function dailyActualsRandomOffset(dayUtc, timezone) {
     const seed = hashString(`${dayUtc}|${timezone}|actuals-random-offset`);
     const minuteSpan = DEFAULT_ACTUALS_RANDOM_MAX_OFFSET_MINUTES - DEFAULT_ACTUALS_RANDOM_MIN_OFFSET_MINUTES + 1;
     const minuteOffset = DEFAULT_ACTUALS_RANDOM_MIN_OFFSET_MINUTES + (seed % minuteSpan);
-    const secondOffset = (seed >>> 8) % 60;
-    return { minuteOffset, secondOffset };
+    return { minuteOffset };
 }
 
 function fromIso(value) {
@@ -783,7 +782,7 @@ function buildActualsTimes(dayUtc, env) {
         const configuredDelay = Math.floor(parseNumber(env.ACTUALS_DELAY, DEFAULT_ACTUALS_DELAY_MINUTES));
         const actualsDelay = Math.max(0, Math.min(MAX_ACTUALS_DELAY_MINUTES, configuredDelay));
         const randomOffset = dailyActualsRandomOffset(dayUtc, timezone);
-        const targetSecondOfDay = ((actualsDelay + randomOffset.minuteOffset) * 60) + randomOffset.secondOffset;
+        const targetSecondOfDay = (actualsDelay + randomOffset.minuteOffset) * 60;
         baseSeconds = localSecondMatchesUtcDay(dayUtc, timezone, targetSecondOfDay);
     } else {
         const cronList = parseCronList(env.ACTUALS_CRONS, DEFAULT_ACTUALS_CRONS);
