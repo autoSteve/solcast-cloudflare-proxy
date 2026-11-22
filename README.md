@@ -2,11 +2,11 @@
 
 This is a JavaScript Cloudflare Worker proxy for the Solcast Solar hobbyist API.
 
-It is compatible with the Home Assistant custom component integration Solcast Solar, which is available via the Marketplace for 3rd party components. See the [ADVOPTIONS.md](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md) file there for the way to configure it to use a proxy. The minimum supportable version of the Solcast Solar integration is v4.7.0, with specific proxied capabilities added in that release to match this repository reference implementation.
+It is compatible with the Home Assistant custom component integration Solcast Solar, which is available via the Marketplace for 3rd party components. See the [ADVOPTIONS.md](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md) file there for the way to configure it to use a proxy. The minimum supportable version of the Solcast Solar integration is v4.7.0, with specific proxy-aware capabilities added in that release to match this repository reference implementation.
 
-This proxy does not need to used with the Home Assistant Solcast Solar custom component integration, and will function independently.
+This proxy does not need to be used with the Home Assistant Solcast Solar integration, and will function independently.
 
-This worker provides forecasts, estimated actuals and scheduling guidance and cached rooftop resource serving, allowing multiple consumers to utilise a limited number of hobbyist API calls for more than one API consumer.
+A worker provides forecasts, estimated actuals and scheduling guidance and cached rooftop resource serving, allowing multiple consumers to utilise a limited number of hobbyist API calls for more than one API consumer.
 
 ## Architecture
 
@@ -18,11 +18,13 @@ This worker provides forecasts, estimated actuals and scheduling guidance and ca
   - Coordinator computes due forecast/actual update times from its schedule.
   - Retries are alarm-driven for efficiency and effective back-off delay between attempts.
 
+An entirely local worker using a simulator-like configuration is possible. See [Local Simulator Workflow](#local_simulator_workflow), but do note that the Python launcher will almost certainly require modification. (I should add a command line parameter that suppresses any cache warm-up and modifies behaviour for local server use, but have not.)
+
 ## Behaviour
 
 - There are three schedule modes:
   - `cron`, fetching updates at specific times of the UTC-based day.
-  - `daylight`, fetching updates spead over daylight hours, with optional additional updates at specific times of the UTC day.
+  - `daylight`, dividing sunrise-to-sunset into `UPDATE_DIVISIONS` equal intervals and fetching at the start of each interval. The first update is at sunrise; the last is one interval before sunset, closely matching the Home Assistant integration's interval approach, but rounded to whole minutes.
   - `all_day`, spreading updates over 24 hours, with optional additional updates at specific times.
 - A schedule for the day ahead, rebuit on startup and the first cron tick of the new UTC day.
 - Discovery-backed site registration and stale-site cleanup. "Bootstraping" the proxy is by way of requesting rooftop sites for an API key or keys.
@@ -32,7 +34,7 @@ This worker provides forecasts, estimated actuals and scheduling guidance and ca
 
 ## Switching between direct API access and the proxy
 
-**TL;DR:** Deploy the proxy whenever convenient, but coordinate when it starts collecting with when the integration stops calling Solcast directly. Switching does not create fresh API quota. If the remaining quota is uncertain, stop updating forecasts directly to Solcast before UTC midnight and start the proxy after the reset. When returning to direct Solcast API, stop the proxy's upstream collection first; disconnecting the integration does not stop the proxy. Scheduling consistency for the Home Assistant integration and proxy might matter during the switch, with daylight scheduling very close to the integration sunrise to sunset scheduling.
+Deploy the proxy whenever convenient, but coordinate when it starts collecting with when the integration stops calling Solcast directly. If the remaining quota is uncertain, stop updating forecasts directly to Solcast before UTC midnight and start the proxy after the reset. Scheduling consistency for the Home Assistant integration and proxy might matter during the switch, with daylight scheduling very close to the integration sunrise to sunset scheduling.
 
 The integration persists its own API usage counters and resets daily usage at UTC midnight, not local midnight. These counters are local bookkeeping, not a live Solcast account balance, and they are not transferred to or synchronised with the Worker. The proxy does not know how many calls were already made directly, and the integration cannot account for every upstream call made independently by the proxy. Repeated cache reads do not result in upstream calls.
 
@@ -40,7 +42,7 @@ Keep the integration's existing sites, usage, forecasts and other cache files, a
 
 ### Direct access to proxy
 
-1. Deploy and configure the Worker, allowing for the number of sites, API keys and enabled resources when choosing its collection schedule. Wait until its per-minute cron is visibly firing in the Cloudflare Observability logs before switching the integration; this can take five to ten minutes. A fresh deployment with no activated sites does not collect forecasts merely because cron is running; it needs rooftop sites discovery.
+1. Deploy and configure the Worker, allowing for the number of sites, API keys and enabled resources when choosing its collection schedule. If you wait until its per-minute cron is visibly firing in the Cloudflare Observability logs before switching the integration (which can take 5-10 minutes) then the configured schedule can be verified in the logs. A fresh deployment with no activated sites does not collect forecasts merely because cron is running; it needs rooftop sites discovery.
 2. Stop direct collection by every consumer that will share the proxy's API key, then change the integration's advanced Solcast URL and port settings to the proxy endpoint as described in the integration's [advanced options](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md). Keep the same API key and existing caches, and reload the integration. Successful rooftop sites discovery registers its sites for scheduled collection, and the integration loads the proxy schedule on startup. A new proxy has no forecast cache until its first successful scheduled collection, so data will not be immediately availabile.
 3. If switching during a UTC day, allow for calls already made directly plus the proxy's remaining collections for today. The integration's existing local usage count may also prevent further fetches until UTC midnight reset, although an integration advanced option `allow_exceed_api_limit_maximum` is enabled by default when a non-standard `solcast_url` is in use so updates will not be limited by default. Switching just after the UTC reset is simpler, but not mandatory when you know there is enough remaining quota. Scheduling should adjust. Check `/proxy_status` and the integration logs rather than forcing extra updates to test the transition.
 
@@ -54,7 +56,7 @@ Keep the integration's existing sites, usage, forecasts and other cache files, a
 - `SCHEDULE_MODE`: `cron`, `daylight`, `all_day`.
 - `FORECAST_CRONS`, `ACTUALS_CRONS`: semicolon-separated cron list (used in `cron` mode).
 - `UPDATE_DIVISIONS`: number of forecast slots for `daylight`/`all_day`.
-- `SCHEDULE_EXCEPTIONS_UTC`: JSON array or CSV of UTC exceptions (additional updates).
+- `SCHEDULE_EXCEPTIONS_UTC`: JSON array or CSV of additional forecast collection times in UTC, in any schedule mode. `HH:MM` entries repeat daily; full ISO timestamps apply only on their UTC date. Duplicate times are collected once, and the estimated-actuals schedule is unchanged. For example, `SCHEDULE_EXCEPTIONS_UTC = '["07:40"]'` adds a forecast collection at 07:40 UTC, even outside daylight hours. Each additional time uses extra upstream quota per registered key/site pair.
 - `ENABLE_ESTIMATED_ACTUALS`: `true`/`false` toggle for scheduled estimated-actuals fetching (default: `false`).
 - `LATITUDE`, `LONGITUDE`, `TIMEZONE`: required for `daylight`/`all_day`.
 - `ACTUALS_DELAY`: minutes after local midnight baseline for actuals in `daylight`/`all_day` (mimicks the HA integration advanced option `estimated_actuals_fetch_delay`).
@@ -62,6 +64,14 @@ Keep the integration's existing sites, usage, forecasts and other cache files, a
 - `POLL_DELAY_MIN_SECONDS`: adaptive floor delay for `daylight`/`all_day` polling advice.
 - `MAX_ATTEMPTS`: maximum retry failure cycles before `give_up` is reported to downstream consumers.
 - `RETRY_BACKOFF_SECONDS`: retry backoff base for alarm scheduling.
+
+## Forced updates
+
+It may be that you have "exceptions" to the auto-update daylight or all day update times, and if you are using the Home Assistant Solcast Solar integration then these will be configured using an automation to perform a "forced" update. This is not the way that this proxy expects an exception to that scheduling to occur.
+
+Additional updates must be specified using the `SCHEDULE_EXCEPTIONS_UTC` runtime control in this proxy, which will cause the integration to fetch an update just after that specific time. In contrast, a forced update will only get the most recently acquired cached update, and will work, just will not cause an actual Solcast update to occur.
+
+When a `SCHEDULE_EXCEPTIONS_UTC` set of additional updates is configured then these will be handled by the integration auto-update feature.
 
 ## Endpoints
 
@@ -126,8 +136,8 @@ SCHEDULE_MODE = "all_day"
 # daylight/all_day mode: number of spread updates per day
 UPDATE_DIVISIONS = "9"
 
-# Exceptions: JSON array or comma-separated list of HH:MM or full ISO timestamps in UTC
-SCHEDULE_EXCEPTIONS_UTC = "[]"
+# Additional forecasts: JSON array or comma-separated HH:MM or full ISO timestamps in UTC
+SCHEDULE_EXCEPTIONS_UTC = '["07:40:]'
 
 # Required for daylight and all_day modes
 LATITUDE = "-33.856784"

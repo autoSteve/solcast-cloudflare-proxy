@@ -106,6 +106,49 @@ for (const { name, previousSecond, history, seconds, expectedSamples, expectedCo
     });
 }
 
+for (const { name, exceptions, additional } of [
+    { name: "no exceptions", exceptions: "[]", additional: [] },
+    { name: "JSON daily exceptions", exceptions: '["07:40","07:40","07:29"]', additional: ["07:40"] },
+    { name: "CSV daily exceptions", exceptions: "07:40,07:29,07:40", additional: ["07:40"] },
+    { name: "date-specific exceptions", exceptions: '["2026-11-22T07:40:00Z","2026-11-23T08:40:00Z"]', additional: ["07:40"] },
+    { name: "outside daylight", exceptions: '["12:40"]', additional: ["12:40"] },
+]) {
+    test(`daylight schedule uses eight intervals plus ${name}`, async (t) => {
+        const h = await harness(t, {
+            SCHEDULE_MODE: "daylight", LATITUDE: "-37.8136", LONGITUDE: "144.9631",
+            TIMEZONE: "Australia/Melbourne", UPDATE_DIVISIONS: "8", ENABLE_ESTIMATED_ACTUALS: "true",
+        });
+        t.mock.timers.setTime(Date.parse("2026-11-22T00:00:00Z"));
+        const previous = await h.coordinator.rebuildScheduleIfNeeded();
+        const actualsSeconds = previous.schedule.actualsTimesSecondOfDay;
+        h.coordinator.env.SCHEDULE_EXCEPTIONS_UTC = exceptions;
+        h.reload();
+        const data = await h.coordinator.rebuildScheduleIfNeeded();
+        assert.deepEqual(data.schedule.forecastTimesUtc, [
+            "00:19", "02:07", "03:54", "05:42", "07:29", "18:56", "20:44", "22:31", ...additional,
+        ].sort());
+        assert.deepEqual(data.schedule.actualsTimesSecondOfDay, actualsSeconds);
+    });
+}
+
+test("forecast exception triggers collection without changing the actuals schedule", async (t) => {
+    const h = await harness(t, {
+        FORECAST_CRONS: "0 13 * * *", ACTUALS_CRONS: "0 14 * * *",
+        ENABLE_ESTIMATED_ACTUALS: "true", SCHEDULE_EXCEPTIONS_UTC: '["12:01"]',
+    });
+    h.replies.push({ status: 200, payload: DISCOVERY });
+    assert.equal((await h.request("/rooftop_sites")).status, 200);
+    t.mock.timers.tick(60000);
+    h.replies.push({ status: 200, payload: payloadFor("forecasts") });
+    await h.tick();
+    const data = await h.coordinator.load();
+    assert.deepEqual(data.schedule.forecastTimesUtc, ["12:01", "13:00"]);
+    assert.deepEqual(data.schedule.actualsTimesUtc, ["14:00"]);
+    assert.equal(data.resources[`1|${SITE}|forecasts`].last_success_at, new Date().toISOString());
+    assert.equal(data.resources[`1|${SITE}|estimated_actuals`].last_success_at, null);
+    assert.equal(h.upstream.mock.callCount(), 2);
+});
+
 test("daylight schedule rolls over and collects via cron without daily client requests", async (t) => {
     const h = await harness(t, {
         SCHEDULE_MODE: "daylight", LATITUDE: "-33.856784", LONGITUDE: "151.215297",

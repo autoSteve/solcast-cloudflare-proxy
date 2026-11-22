@@ -1,5 +1,5 @@
 const PROXY_NAME = "solcast-proxy";
-const PROXY_VERSION = "cloudflare-do-js-1.0";
+const PROXY_VERSION = "cloudflare-do-js-1.6";
 const DO_ROUTE_PREFIX = "/_do";
 const BASE_TICK_CRON = "* * * * *";
 
@@ -268,7 +268,7 @@ function spreadTimesRaw(startMinute, endMinute, divisions) {
     }
 
     const out = [];
-    const step = span / (count - 1);
+    const step = span / count;
     for (let i = 0; i < count; i += 1) {
         out.push(Math.round(startMinute + step * i));
     }
@@ -707,11 +707,11 @@ function applyExceptions(minutes, dayUtc, exceptionItems) {
         return minutes;
     }
 
-    const blocked = new Set();
+    const scheduled = new Set(minutes);
     for (const raw of exceptionItems) {
         const hhmmMinute = hhmmToMinuteOfDay(raw);
         if (hhmmMinute !== null) {
-            blocked.add(hhmmMinute);
+            scheduled.add(hhmmMinute);
             continue;
         }
 
@@ -719,12 +719,12 @@ function applyExceptions(minutes, dayUtc, exceptionItems) {
         if (!Number.isNaN(ts)) {
             const d = new Date(ts);
             if (dayUtcString(d) === dayUtc) {
-                blocked.add(utcMinuteOfDay(d));
+                scheduled.add(utcMinuteOfDay(d));
             }
         }
     }
 
-    return minutes.filter((m) => !blocked.has(m));
+    return [...scheduled];
 }
 
 function buildForecastTimes(dayUtc, env) {
@@ -752,7 +752,7 @@ function buildForecastTimes(dayUtc, env) {
             const sunrise = Math.max(0, sun.sunriseMinuteUtc);
             const sunset = Math.min(1439, sun.sunsetMinuteUtc);
             if (sunrise < sunset) {
-                baseMinutes = spreadTimes(sunrise, sunset, divisions);
+                baseMinutes = uniqueSortedMinutes(spreadTimesRaw(sunrise, sunset, divisions));
             } else {
                 // East-of-UTC locations can have a daylight window that wraps over UTC midnight.
                 // Spread across the wrapped interval and fold back into 00:00..23:59.
@@ -766,8 +766,8 @@ function buildForecastTimes(dayUtc, env) {
     }
 
     baseMinutes = uniqueSortedMinutes(baseMinutes);
-    const filteredMinutes = uniqueSortedMinutes(applyExceptions(baseMinutes, dayUtc, exceptions));
-    return uniqueSortedSeconds(filteredMinutes.map((m) => m * 60));
+    const scheduledMinutes = uniqueSortedMinutes(applyExceptions(baseMinutes, dayUtc, exceptions));
+    return uniqueSortedSeconds(scheduledMinutes.map((m) => m * 60));
 }
 
 function buildActualsTimes(dayUtc, env) {
@@ -776,7 +776,6 @@ function buildActualsTimes(dayUtc, env) {
     }
 
     const mode = String(env.SCHEDULE_MODE || DEFAULT_MODE).toLowerCase();
-    const exceptions = parseExceptions(env.SCHEDULE_EXCEPTIONS_UTC);
 
     let baseSeconds = [];
     if (mode === "daylight" || mode === "all_day") {
@@ -792,10 +791,7 @@ function buildActualsTimes(dayUtc, env) {
         baseSeconds = uniqueSortedSeconds(baseMinutes.map((m) => m * 60));
     }
 
-    const baseMinutes = uniqueSortedMinutes(baseSeconds.map((s) => Math.floor(s / 60)));
-    const filteredMinutes = uniqueSortedMinutes(applyExceptions(baseMinutes, dayUtc, exceptions));
-    const allowedMinutes = new Set(filteredMinutes);
-    return uniqueSortedSeconds(baseSeconds.filter((s) => allowedMinutes.has(Math.floor(s / 60))));
+    return uniqueSortedSeconds(baseSeconds);
 }
 
 function scheduleConfigKey(env) {
