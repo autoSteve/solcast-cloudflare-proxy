@@ -1018,6 +1018,16 @@ export class ProxyCoordinator {
             changed = true;
         }
 
+        for (const site of sortedSites) {
+            for (const kind of [FORECAST_KIND, ACTUALS_KIND]) {
+                const rid = resourceId(apiKey, site, kind);
+                if (!data.resources[rid]) {
+                    data.resources[rid] = { ...newResourceState(apiKey, site, kind), registered_at: iso(nowUtc()) };
+                    changed = true;
+                }
+            }
+        }
+
         return changed;
     }
 
@@ -1029,6 +1039,7 @@ export class ProxyCoordinator {
             const activityAt = Math.max(
                 fromIso(resource.last_requested_at)?.getTime() || 0,
                 fromIso(resource.last_success_at)?.getTime() || 0,
+                fromIso(resource.registered_at)?.getTime() || 0,
             );
             const siteKey = resourceId(resource.api_key, resource.site, "");
             siteActivity.set(siteKey, Math.max(siteActivity.get(siteKey) || 0, activityAt));

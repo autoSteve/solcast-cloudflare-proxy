@@ -149,14 +149,34 @@ test("schedule rebuilds after poll delay configuration changes", async (t) => {
     assert.equal((await h.request("/proxy_schedule")).headers.get("x-proxy-poll-delay-seconds"), "45");
 });
 
-test("discovery alone does not activate resource collection", async (t) => {
-    const h = await harness(t);
-    h.replies.push({ status: 200, payload: DISCOVERY });
-    assert.equal((await h.request("/rooftop_sites")).status, 200);
-    assert.deepEqual(await h.coordinator.collectKind("forecasts"), { attempted: 0, succeeded: 0 });
-    assert.deepEqual((await h.coordinator.load()).resources, {});
-    assert.equal(h.upstream.mock.callCount(), 1);
-});
+for (const { enabled, kinds } of [
+    { enabled: "false", kinds: ["forecasts"] },
+    { enabled: "true", kinds: ["forecasts", "estimated_actuals"] },
+]) {
+    test(`discovery alone activates scheduled resource collection (actuals ${enabled})`, async (t) => {
+        const h = await harness(t, {
+            FORECAST_CRONS: "1 12 * * *", ACTUALS_CRONS: "1 12 * * *", ENABLE_ESTIMATED_ACTUALS: enabled,
+        });
+        h.replies.push({ status: 200, payload: DISCOVERY });
+        assert.equal((await h.request("/rooftop_sites")).status, 200);
+        const resources = (await h.coordinator.load()).resources;
+        assert.deepEqual(Object.keys(resources), [`1|${SITE}|forecasts`, `1|${SITE}|estimated_actuals`]);
+        assert.equal(resources[`1|${SITE}|forecasts`].registered_at, new Date(NOW).toISOString());
+        assert.equal(Object.hasOwn(resources[`1|${SITE}|forecasts`], "last_requested_at"), false);
+        assert.equal(h.upstream.mock.callCount(), 1);
+        h.reload();
+        t.mock.timers.tick(60000);
+        for (const kind of kinds) {
+            h.replies.push({ status: 200, payload: payloadFor(kind) });
+        }
+        await h.tick();
+        assert.equal(h.upstream.mock.callCount(), 1 + kinds.length);
+        for (const kind of kinds) {
+            assert.equal((await h.coordinator.load()).resources[`1|${SITE}|${kind}`].last_success_at, new Date().toISOString());
+        }
+        assert.equal(h.replies.length, 0);
+    });
+}
 
 for (const activity of ["downstream", "upstream"]) {
     test(`${activity} activity preserves only the active key/site pair`, async (t) => {
@@ -185,7 +205,8 @@ for (const activity of ["downstream", "upstream"]) {
 
 test("expired key/site caches and retry alarms are removed at 24 hours", async (t) => {
     const h = await harness(t);
-    await h.register();
+    h.replies.push({ status: 200, payload: DISCOVERY });
+    assert.equal((await h.request("/rooftop_sites")).status, 200);
     h.replies.push({ status: 500, payload: {} });
     await h.coordinator.collectKind("forecasts");
     assert.notEqual(h.storage.alarm, null);
@@ -424,7 +445,9 @@ test("forced discovery semantics are consolidated", async (t) => {
             const data = await h.coordinator.load();
             assert.deepEqual(data.discovery_payloads["1"], payload);
             assert.deepEqual(data.accounts["1"], payload.sites.map((site) => site.resource_id));
-            assert.deepEqual(data.resources, {});
+            assert.deepEqual(Object.keys(data.resources), payload.sites.flatMap((site) => [
+                `1|${site.resource_id}|forecasts`, `1|${site.resource_id}|estimated_actuals`,
+            ]));
             h.reload();
             await h.coordinator.load();
             h.replies.push({ status: 502, payload: {} });

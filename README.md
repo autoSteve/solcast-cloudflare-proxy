@@ -2,11 +2,11 @@
 
 This is a JavaScript Cloudflare Worker proxy for the Solcast Solar hobbyist API.
 
-It is compatible with the Home Assistant custom component integration Solcast Solar, which is available via the Marketplace for 3rd party components. See the [ADVOPTIONS.md](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md) file there. The minimum supportable version of the Solcast Solar integration is v4.7.0, with specific proxied capabilities added in that release to match this repository reference implementation.
+It is compatible with the Home Assistant custom component integration Solcast Solar, which is available via the Marketplace for 3rd party components. See the [ADVOPTIONS.md](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md) file there for the way to configure it to use a proxy. The minimum supportable version of the Solcast Solar integration is v4.7.0, with specific proxied capabilities added in that release to match this repository reference implementation.
 
-It does not need to used with the Home Assistant Solcast Solar custom component integration, and will function independently.
+This proxy does not need to used with the Home Assistant Solcast Solar custom component integration, and will function independently.
 
-This worker provides forecasts, estimated actuals and scheduling guidance and cached resource serving, and allows multiple consumers to utilise a small number of hobbyist API calls for more than one API consumer.
+This worker provides forecasts, estimated actuals and scheduling guidance and cached rooftop resource serving, allowing multiple consumers to utilise a limited number of hobbyist API calls for more than one API consumer.
 
 ## Architecture
 
@@ -15,50 +15,52 @@ This worker provides forecasts, estimated actuals and scheduling guidance and ca
 - State store: SQLite-backed Durable Object storage.
 - Scheduler model:
   - Worker cron trigger is a fixed per-minute tick (`* * * * *`) with light runtime.
-  - Coordinator computes due forecast/actual slots from schedule mode.
-  - Retries are alarm-driven, not cron-driven.
+  - Coordinator computes due forecast/actual update times from its schedule.
+  - Retries are alarm-driven for efficiency and effective back-off delay between attempts.
 
 ## Behaviour
 
-- Schedule modes:
-  - `cron`
-  - `daylight`
-  - `all_day`
-- Daily schedule rebuild on the first cron tick of the new UTC day, independently of integration requests.
-- Discovery-backed site registration and stale-site cleanup.
+- There are three schedule modes:
+  - `cron`, fetching updates at specific times of the UTC-based day.
+  - `daylight`, fetching updates spead over daylight hours, with optional additional updates at specific times of the UTC day.
+  - `all_day`, spreading updates over 24 hours, with optional additional updates at specific times.
+- A schedule for the day ahead, rebuit on startup and the first cron tick of the new UTC day.
+- Discovery-backed site registration and stale-site cleanup. "Bootstraping" the proxy is by way of requesting rooftop sites for an API key or keys.
 - Forecast collection is always scheduled; estimated-actuals collection is optional and disabled by default.
-- Home Assistant integration retry model is lock-step: one retryable failure puts participating resources into coordinated retry where they follow the retry advice.
-- While retry is active, scheduled tick collection is suppressed and retries are handled by the Durable Object alarm.
+- Home Assistant integration retry model is lock-step: one retryable failure puts participating resources into coordinated retry where they follow the proxy retry delay advice.
+- While retry is active, scheduled tick forecast collection is suppressed and retries are handled by the Durable Object alarm.
 
 ## Switching between direct API access and the proxy
 
-**TL;DR:** Deploy the proxy whenever convenient, but coordinate when it starts collecting with when the integration stops calling Solcast directly. Switching does not create fresh API quota. If the remaining quota is uncertain, stop the old collector before UTC midnight and start the replacement after the reset. When returning to direct access, stop the proxy's upstream collection first: disconnecting the integration does not stop the proxy. Scheduling consistency for the Home Assistant integration and proxy might matter during the switch, with daylight scheduling very close to the integration sunrise to sunset scheduling.
+**TL;DR:** Deploy the proxy whenever convenient, but coordinate when it starts collecting with when the integration stops calling Solcast directly. Switching does not create fresh API quota. If the remaining quota is uncertain, stop updating forecasts directly to Solcast before UTC midnight and start the proxy after the reset. When returning to direct Solcast API, stop the proxy's upstream collection first; disconnecting the integration does not stop the proxy. Scheduling consistency for the Home Assistant integration and proxy might matter during the switch, with daylight scheduling very close to the integration sunrise to sunset scheduling.
 
-The integration persists its own API usage counters and resets daily usage at UTC midnight, not local midnight. These counters are local bookkeeping, not a live Solcast account balance, and they are not transferred to or synchronised with the Worker. The proxy does not know how many calls were already made directly, and the integration cannot account for every upstream call made independently by the proxy. Repeated cache reads do not result in upstream calls. Keep the integration's existing usage files.
+The integration persists its own API usage counters and resets daily usage at UTC midnight, not local midnight. These counters are local bookkeeping, not a live Solcast account balance, and they are not transferred to or synchronised with the Worker. The proxy does not know how many calls were already made directly, and the integration cannot account for every upstream call made independently by the proxy. Repeated cache reads do not result in upstream calls.
+
+Keep the integration's existing sites, usage, forecasts and other cache files, as they will be compatible.
 
 ### Direct access to proxy
 
-1. Deploy and configure the Worker, allowing for the number of sites, API keys and enabled resource kinds when choosing its collection schedule. Wait until its per-minute cron is visibly firing before switching the integration. A fresh deployment with no activated sites does not collect forecasts merely because cron is running; discovery alone does not activate collection either.
-2. Stop direct collection by every consumer that will share the proxy's API key, then change the integration's advanced Solcast URL and port settings to the proxy endpoint as described in the integration's [advanced options](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md). Keep the same API key and existing caches, and reload the integration. Discovery and valid site-resource requests register and activate its sites; the integration loads the proxy schedule on startup. A new proxy has no forecast cache until its first successful scheduled collection, so immediate data availability is not guaranteed.
-3. If switching during a UTC day, allow for calls already made directly plus the proxy's remaining collections. The integration's existing local usage count may also prevent further fetches until its reset. Switching just after the UTC reset is simpler, but not mandatory when you know there is enough remaining quota. Scheduling should adjust. Check `/proxy_status` and the integration logs rather than forcing extra updates to test the transition.
+1. Deploy and configure the Worker, allowing for the number of sites, API keys and enabled resources when choosing its collection schedule. Wait until its per-minute cron is visibly firing in the Cloudflare Observability logs before switching the integration; this can take five to ten minutes. A fresh deployment with no activated sites does not collect forecasts merely because cron is running; it needs rooftop sites discovery.
+2. Stop direct collection by every consumer that will share the proxy's API key, then change the integration's advanced Solcast URL and port settings to the proxy endpoint as described in the integration's [advanced options](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md). Keep the same API key and existing caches, and reload the integration. Successful rooftop sites discovery registers its sites for scheduled collection, and the integration loads the proxy schedule on startup. A new proxy has no forecast cache until its first successful scheduled collection, so data will not be immediately availabile.
+3. If switching during a UTC day, allow for calls already made directly plus the proxy's remaining collections for today. The integration's existing local usage count may also prevent further fetches until UTC midnight reset, although an integration advanced option `allow_exceed_api_limit_maximum` is enabled by default when a non-standard `solcast_url` is in use so updates will not be limited by default. Switching just after the UTC reset is simpler, but not mandatory when you know there is enough remaining quota. Scheduling should adjust. Check `/proxy_status` and the integration logs rather than forcing extra updates to test the transition.
 
 ### Proxy to direct access
 
-1. Stop upstream proxy collection for the API key before restoring direct access. This includes scheduled cron collection and any pending alarm-driven retries; removing cron alone does not cancel an existing retry alarm. Coordinate with other proxy consumers if they share the key. Simply changing the integration URL back, removing a public route, or waiting for the inactivity timeout is not a reliable shutdown: successful upstream collections keep sites active without any clients.
-2. Restore the integration's default Solcast URL and port settings and reload it. Direct discovery clears proxy mode, and the integration resumes its own scheduling. Keep the existing usage counters and forecast caches, but do not assume the counters include calls the proxy made independently. For a predictable fresh daily budget, stop proxy collection before UTC midnight and resume direct collection after the reset; otherwise account for the day's upstream calls before resuming.
+1. Stop upstream proxy collection for the API key before restoring direct access. This includes scheduled cron collection and any pending alarm-driven retries; removing cron alone does not cancel an existing retry alarm, so deleting the worker is advised.
+2. Restore the integration's default Solcast URL and port settings, or remove the advanced options and reload it. Direct discovery clears proxy mode, and the integration resumes its own scheduling. Keep the existing usage counters and forecast caches, but do not assume the counters are correct. For a predictable fresh daily budget, stop proxy collection before UTC midnight and resume direct collection after the reset.
 
 ## Runtime controls (`wrangler.toml` `[vars]`)
 
 - `SCHEDULE_MODE`: `cron`, `daylight`, `all_day`.
 - `FORECAST_CRONS`, `ACTUALS_CRONS`: semicolon-separated cron list (used in `cron` mode).
 - `UPDATE_DIVISIONS`: number of forecast slots for `daylight`/`all_day`.
-- `SCHEDULE_EXCEPTIONS_UTC`: JSON array or CSV of UTC exceptions.
+- `SCHEDULE_EXCEPTIONS_UTC`: JSON array or CSV of UTC exceptions (additional updates).
 - `ENABLE_ESTIMATED_ACTUALS`: `true`/`false` toggle for scheduled estimated-actuals fetching (default: `false`).
 - `LATITUDE`, `LONGITUDE`, `TIMEZONE`: required for `daylight`/`all_day`.
-- `ACTUALS_DELAY`: minutes after local midnight baseline for actuals in `daylight`/`all_day`.
+- `ACTUALS_DELAY`: minutes after local midnight baseline for actuals in `daylight`/`all_day` (mimicks the HA integration advanced option `estimated_actuals_fetch_delay`).
 - `POLL_DELAY_SECONDS`: fixed follow delay in `cron` mode; configured/default reference for adaptive modes.
-- `POLL_DELAY_MIN_SECONDS`: adaptive floor for `daylight`/`all_day` polling advice.
-- `MAX_ATTEMPTS`: maximum retry failure cycles before `give_up`.
+- `POLL_DELAY_MIN_SECONDS`: adaptive floor delay for `daylight`/`all_day` polling advice.
+- `MAX_ATTEMPTS`: maximum retry failure cycles before `give_up` is reported to downstream consumers.
 - `RETRY_BACKOFF_SECONDS`: retry backoff base for alarm scheduling.
 
 ## Endpoints
@@ -72,11 +74,11 @@ The integration persists its own API usage counters and resets daily usage at UT
 
 The proxy supports multiple API keys and learns which sites belong to each key when a client calls `GET /rooftop_sites` through the proxy for that key. It forwards the request to Solcast and stores the successful discovery response, including site metadata.
 
-Discovery alone does not activate collection or give sites an inactivity grace period; a valid site-specific resource request activates scheduled collection for that key/site pair.
+Successful discovery registers every returned site for scheduled forecast collection and, when enabled, estimated-actuals collection.
 
-Either a valid downstream resource request or a successful upstream resource collection keeps that key/site pair active. Activity on forecasts or estimated actuals keeps both kinds active for that pair, without affecting other sites or keys. After 24 hours with neither kind of activity, its resource state and cached data are deleted and collection stops. Failed or malformed upstream responses do not refresh activity. Successful scheduled collections can keep a site active even if clients stop requesting it.
+Either a valid downstream resource request or a successful upstream resource collection keeps each key/site pair active. Activity on forecasts or estimated actuals keeps both kinds active for that pair, without affecting other sites or keys. After 24 hours with neither kind of activity, its resource state and cached data are deleted and collection stops. Failed or malformed upstream responses do not refresh activity. Successful scheduled collections can keep a site active even if clients stop requesting it.
 
-Successful discovery refreshes the API key's discovery data but does not refresh individual sites' activity. Later successful discovery calls remove resources for sites no longer returned for that key. Keys and their discovery data expire after 24 hours without successful discovery, a valid site-specific request, or successful resource collection. Existing resource caches without a recorded client request use the last successful collection time for expiry; those with neither timestamp are removed.
+Successful discovery refreshes the API key's discovery data but does not renew existing sites' activity windows or replace their cached data. Later successful discovery calls register newly returned sites and remove resources for sites no longer returned for that key. Keys and their discovery data expire after 24 hours without successful discovery, a valid site-specific request, or successful resource collection.
 
 ### Forced cached responses
 
@@ -89,7 +91,7 @@ Add `&force=true` to any of the three `/rooftop_sites` requests above to return 
 - With no successful response cached, the proxy returns HTTP `503`.
 - Collection/retry headers remain true to present state, even with HTTP `200`: inspect `x-proxy-last-success-at`, `x-proxy-upstream-status` and `x-proxy-last-fetch-status` to assess freshness and collection failures.
 
-The Home Assistant Solcast Solar integration _never_ utilises the `force` parameter, with it favouring situational awareness and lock-step behaviour over receiving potentially out-of-date information; it caches the latest forecasts and sites data so it does not need this mechanism. Your other scripts and code may need it.
+The Home Assistant Solcast Solar integration _never_ utilises the `force` parameter, with it favouring situational awareness and lock-step behaviour over receiving potentially out-of-date information; it caches the latest forecasts and sites data so it does not need this proxy mechanism. Your other scripts and code may need it.
 
 ## Example `wrangler.toml`
 
@@ -157,11 +159,11 @@ invocation_logs = true
 
 Once the worker is deployed at Cloudflare it will take approximately five minutes for the per-minute cron schedule to begin firing. With worker observability logs enabled the first every-minute `* * * * *` will eventually show up, and it is at this point that things like schedules are created for all-day and daylight scheduling options. The Home Assistant integration (or anything else) should not be configured to use the proxy until this first cron execution has occurred.
 
-The per-minute cron rebuilds the schedule on its first tick after UTC midnight and continues collection without integration requests. Cloudflare may dispatch that tick partway through the minute. A normal redeploy preserves Durable Object state, but the next coordinator request rebuilds the schedule when deployment configuration changed. This includes `POLL_DELAY_SECONDS` and `POLL_DELAY_MIN_SECONDS`, so a freshly deployed `x-proxy-poll-delay-seconds` value is not paired with stale schedule metadata. The proxy version is also part of the rebuild key; bump `PROXY_VERSION` with schedule-affecting implementation changes so code-only deploys invalidate the persisted schedule.
+The per-minute cron rebuilds the schedule on its first tick after UTC midnight and continues collection without integration requests. Cloudflare may dispatch that tick partway through the minute. A normal redeploy preserves Durable Object state, but the next coordinator request rebuilds the schedule when deployment configuration changed. This includes `POLL_DELAY_SECONDS` and `POLL_DELAY_MIN_SECONDS`, so a freshly deployed `x-proxy-poll-delay-seconds` value is not paired with stale schedule metadata. (The proxy version is also part of the rebuild key; bump `PROXY_VERSION` with schedule-affecting implementation changes so code-only deploys invalidate the persisted schedule.)
 
 ## Local simulator workflow
 
-For development purposes, this repo includes a local launcher that wires Wrangler HTTPS to the Solcast Solar integration simulator certificate and emulates the per-minute cron locally. To run the JavaScript proxy under wrangler it can be mounted at /workspaces/homeAssistant-core/tests/components/solcast_solar/proxy_js or copied there. The `.gitignore` file for the Solcast integration ignores its presence at a `proxy_js` location.
+For development purposes, this repo includes a local Python launcher that wires Wrangler HTTPS to the Solcast Solar integration simulator certificate and emulates the per-minute cron locally. To run the JavaScript proxy under wrangler it can be mounted at /workspaces/homeAssistant-core/tests/components/solcast_solar/proxy_js or copied there. The `.gitignore` file for the Solcast integration ignores its presence at a `proxy_js` location.
 
 ### 0) Set-up in the dev. container if required
 
