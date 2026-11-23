@@ -1,16 +1,36 @@
-# JavaScript Cloudflare Solcast Solar hobbyist API Proxy
+# JavaScript Solcast Solar hobbyist API Proxy
 
-This is a JavaScript Cloudflare Worker proxy for the Solcast Solar hobbyist API.
+This is a JavaScript Worker proxy for the Solcast Solar hobbyist API.
+
+Originally designed to run on the Cloudflare Workers free tier, it can also be run locally with Wrangler.
 
 It is compatible with the Home Assistant custom component integration Solcast Solar, which is available via the Marketplace for 3rd party components. See the [ADVOPTIONS.md](https://github.com/BJReplay/ha-solcast-solar/blob/main/ADVOPTIONS.md) file there for the way to configure it to use a proxy. The minimum supportable version of the Solcast Solar integration is v4.7.0, with specific proxy-aware capabilities added in that release to match this repository reference implementation.
 
 This proxy does not need to be used with the Home Assistant Solcast Solar integration, and will function independently.
 
-A worker provides forecasts, estimated actuals and scheduling guidance and cached rooftop resource serving, allowing multiple consumers to utilise a limited number of hobbyist API calls for more than one API consumer.
+The worker provides forecasts, estimated actuals, scheduling guidance and cached rooftop resource serving, allowing multiple consumers to utilise a limited number of hobbyist API calls for more than one API consumer. Multiple Solcast API keys will also be proxied by a single instance.
+
+**Contents**
+
+- [Architecture](#architecture)
+- [Behaviour](#behaviour)
+- [Home Assistant: Switching between direct API access and the proxy](#home-assistant-switching-between-direct-api-access-and-the-proxy)
+- [Runtime controls (`wrangler.toml` `[vars]`)](#runtime-controls-wranglertoml-vars)
+- [Forced updates](#forced-updates)
+- [Endpoints](#endpoints)
+- [Example `wrangler.toml`](#example-wranglertoml)
+- [Deployment](#deployment)
+- [Local simulator workflow](#local-simulator-workflow)
+- [Verification examples](#verification-examples)
+- [Home Assistant integration notes](#home-assistant-integration-notes)
+- [Durable Object storage notes](#durable-object-storage-notes)
+- [Troubleshooting](#troubleshooting)
+- [Prerequisites](#prerequisites)
+- [Response headers issued](#response-headers-issued)
 
 ## Architecture
 
-- Runtime: Cloudflare Worker (`proxy_cloudflare.js`).
+- Runtime: Cloudflare Worker (`proxy_cloudflare.js`), but will run in Wrangler with a Python launcher.
 - Coordinator: one Durable Object (`ProxyCoordinator`).
 - State store: SQLite-backed Durable Object storage.
 - Scheduler model:
@@ -18,7 +38,7 @@ A worker provides forecasts, estimated actuals and scheduling guidance and cache
   - Coordinator computes due forecast/actual update times from its schedule.
   - Retries are alarm-driven for efficiency and effective back-off delay between attempts.
 
-An entirely local proxy worker is possible without bothering with Cloudflare. See [Local Simulator Workflow](#local_simulator_workflow), and get hints from the example `toml`. In short, run on Linux with prerequisites, and set the Solcast host/port to `api.solcast.com.au`/`443` in `wrangler.toml`. By doing so the Python launcher can be used to spin up the worker on any server using wrangler and bind the proxy to all interfaces by default or one specific interface.
+An entirely local proxy worker is possible without bothering with Cloudflare. See [Local Simulator Workflow](#local_simulator_workflow), and get hints from the example `toml`. In short, run on Linux/Mac/Windows/+ with prerequisites, and set the Solcast host/port to `api.solcast.com.au`/`443` in `wrangler.toml`. By doing so the Python launcher can be used to spin up the worker on any server using wrangler and bind the proxy to all interfaces by default or one specific interface.
 
 ## Behaviour
 
@@ -32,11 +52,11 @@ An entirely local proxy worker is possible without bothering with Cloudflare. Se
 - Home Assistant integration retry model is lock-step: one retryable failure puts participating resources into coordinated retry where they follow the proxy retry delay advice.
 - While retry is active, scheduled tick forecast collection is suppressed and retries are handled by the Durable Object alarm.
 
-## Switching between direct API access and the proxy
+## Home Assistant: Switching between direct API access and the proxy
 
-Deploy the proxy whenever convenient, but coordinate when it starts collecting with when the integration stops calling Solcast directly. If the remaining quota is uncertain, stop updating forecasts directly to Solcast before UTC midnight and start the proxy after the reset. Scheduling consistency for the Home Assistant integration and proxy might matter during the switch, with daylight scheduling very close to the integration sunrise to sunset scheduling.
+Deploy the proxy whenever convenient, but coordinate when it starts collecting with when the Home Assistant integration stops calling Solcast directly. If the remaining quota is uncertain, stop updating forecasts directly to Solcast before UTC midnight and start the proxy after the reset. Scheduling consistency for the Home Assistant integration and proxy might matter during the switch, with daylight scheduling very close to the integration sunrise to sunset scheduling.
 
-The integration persists its own API usage counters and resets daily usage at UTC midnight, not local midnight. These counters are local bookkeeping, not a live Solcast account balance, and they are not transferred to or synchronised with the Worker. The proxy does not know how many calls were already made directly, and the integration cannot account for every upstream call made independently by the proxy. Repeated cache reads do not result in upstream calls.
+The Home Assistant integration persists its own API usage counters and resets daily usage at UTC midnight, not local midnight. These counters are local bookkeeping, not a live Solcast account balance, and they are not transferred to or synchronised with the worker. The proxy does not know how many calls were already made directly (and does not care), and the integration cannot account for every upstream call made independently by the proxy. Repeated cache reads do not result in upstream calls.
 
 Keep the integration's existing sites, usage, forecasts and other cache files, as they will be compatible.
 
