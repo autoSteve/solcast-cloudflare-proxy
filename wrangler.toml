@@ -14,6 +14,11 @@ tag = "v1"
 new_sqlite_classes = ["ProxyCoordinator"]
 
 [vars]
+SOLCAST_HOST = "localhost"
+SOLCAST_PORT = "8443"
+#SOLCAST_HOST = "api.solcast.com.au"
+#SOLCAST_PORT = "443"
+
 # Schedule modes: cron | daylight | all_day
 SCHEDULE_MODE = "daylight"
 

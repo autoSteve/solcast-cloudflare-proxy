@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch local Wrangler for the JS Solcast proxy against the simulator TLS cert."""
+"""Launch local Wrangler for the JS Solcast proxy."""
 
 # ruff: noqa: T201
 
@@ -197,7 +197,7 @@ def _launch_wrangler(
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Check simulator trust and launch Wrangler with scheduler emulation."""
+    """Launch Wrangler with scheduler emulation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config",
@@ -205,17 +205,17 @@ def main(argv: list[str] | None = None) -> None:
         default=DEFAULT_CONFIG,
         help="Wrangler configuration path",
     )
+    parser.add_argument("--address", type=str, default="::", help="Wrangler HTTPS listening address")
     parser.add_argument("--port", type=int, default=9443, help="Wrangler HTTPS listening port")
-    parser.add_argument("--simulator-port", type=int, help="Simulator HTTPS port override")
     parser.add_argument(
         "--api-key",
         action="append",
-        help="Simulator account to prime; repeat for multiple accounts (default: 1 and 2)",
+        help="Simulator account to prime; repeat for multiple accounts (default: 1 and 2) - Not for use with non-localhost",
     )
     parser.add_argument(
         "--check-only",
         action="store_true",
-        help="Verify simulator TLS and config without starting Wrangler",
+        help="Verify simulator TLS and config without starting Wrangler - Not for use with non-localhost",
     )
 
     args = parser.parse_args(argv)
@@ -236,22 +236,27 @@ def main(argv: list[str] | None = None) -> None:
 
         variables = config.get("vars", {})
         solcast_host = str(variables.get("SOLCAST_HOST", "localhost"))
-        simulator_port = int(args.simulator_port or variables.get("SOLCAST_PORT", 8443))
+        solcast_port = int(variables.get("SOLCAST_PORT", 8443))
         if solcast_host != "localhost":
-            parser.error('This local launcher requires SOLCAST_HOST = "localhost" (or omit it).')
+            if args.api_key:
+                parser.error("Non-localhost Solcast API cannot prime using --api-key.")
+            if args.check_only:
+                parser.error("Non-localhost Solcast API cannot use --check_only.")
+        else:
+            certificate = _simulator_certificate(solcast_port)
+            _verify_simulator(certificate, solcast_port)
+            print(f"Verified simulator HTTPS on localhost:{solcast_port}; trusting {certificate}", flush=True)
 
-        certificate = _simulator_certificate(simulator_port)
-        _verify_simulator(certificate, simulator_port)
-        print(f"Verified simulator HTTPS on localhost:{simulator_port}; trusting {certificate}", flush=True)
-
-        if args.check_only:
-            return
+            if args.check_only:
+                return
 
         wrangler = shutil.which("wrangler")
         if wrangler is None:
             parser.error("Wrangler is not on PATH. Activate your Node/nvm environment first.")
 
-        environment = dict(os.environ, NODE_EXTRA_CA_CERTS=str(certificate))
+        environment = dict(os.environ)
+        if solcast_host == "localhost":
+            environment["NODE_EXTRA_CA_CERTS"] = str(certificate)
         command = [
             wrangler,
             "dev",
@@ -261,14 +266,14 @@ def main(argv: list[str] | None = None) -> None:
             "--local-protocol",
             "https",
             "--ip",
-            "127.0.0.1",
+            args.address,
             "--port",
             str(args.port),
             "--test-scheduled",
             "--var",
             f"SOLCAST_HOST:{solcast_host}",
             "--var",
-            f"SOLCAST_PORT:{simulator_port}",
+            f"SOLCAST_PORT:{solcast_port}",
         ]
 
         _launch_wrangler(
@@ -276,7 +281,7 @@ def main(argv: list[str] | None = None) -> None:
             environment,
             crons,
             args.port,
-            tuple(args.api_key) if args.api_key else DEFAULT_API_KEYS,
+            (tuple(args.api_key) if args.api_key else DEFAULT_API_KEYS) if solcast_host == "localhost" else (),
         )
     except KeyboardInterrupt:
         parser.exit(130)

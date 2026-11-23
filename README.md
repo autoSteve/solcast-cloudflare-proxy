@@ -18,7 +18,7 @@ A worker provides forecasts, estimated actuals and scheduling guidance and cache
   - Coordinator computes due forecast/actual update times from its schedule.
   - Retries are alarm-driven for efficiency and effective back-off delay between attempts.
 
-An entirely local worker using a simulator-like configuration is possible. See [Local Simulator Workflow](#local_simulator_workflow), but do note that the Python launcher will almost certainly require modification. (I should add a command line parameter that suppresses any cache warm-up and modifies behaviour for local server use, but have not.)
+An entirely local proxy worker is possible without bothering with Cloudflare. See [Local Simulator Workflow](#local_simulator_workflow), and get hints from the example `toml`. In short, run on Linux with prerequisites, and set the Solcast host/port to `api.solcast.com.au`/`443` in `wrangler.toml`. By doing so the Python launcher can be used to spin up the worker on any server using wrangler and bind the proxy to all interfaces by default or one specific interface.
 
 ## Behaviour
 
@@ -126,6 +126,11 @@ tag = "v1"
 new_sqlite_classes = ["ProxyCoordinator"]
 
 [vars]
+SOLCAST_HOST = "localhost"
+SOLCAST_PORT = "8443"
+#SOLCAST_HOST = "api.solcast.com.au"
+#SOLCAST_PORT = "443"
+
 # Schedule modes: cron | daylight | all_day
 SCHEDULE_MODE = "all_day"
 
