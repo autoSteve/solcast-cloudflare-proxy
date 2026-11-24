@@ -1,5 +1,5 @@
 const PROXY_NAME = "solcast-proxy";
-const PROXY_VERSION = "cloudflare-do-js-1.7";
+const PROXY_VERSION = "cloudflare-do-js-1.8";
 const DO_ROUTE_PREFIX = "/_do";
 const BASE_TICK_CRON = "* * * * *";
 
