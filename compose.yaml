@@ -1,0 +1,13 @@
+services:
+  solcast-proxy:
+    build: .
+    container_name: solcast-proxy-js
+    ports:
+      - "9443:9443"
+    restart: unless-stopped
+    volumes:
+      # Persists the Durable Objects SQLite database across rebuilds/restarts
+      - wrangler_state:/app/.wrangler
+
+volumes:
+  wrangler_state:

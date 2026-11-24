@@ -40,6 +40,8 @@ The worker provides forecasts, estimated actuals, scheduling guidance and cached
 
 An entirely local proxy worker is possible without bothering with Cloudflare. See [Local Simulator Workflow](#local_simulator_workflow), and get hints from the example `toml`. In short, run on Linux/Mac/Windows/+ with prerequisites, and set the Solcast host/port to `api.solcast.com.au`/`443` in `wrangler.toml`. By doing so the Python launcher can be used to spin up the worker on any server using wrangler and bind the proxy to all interfaces by default or one specific interface.
 
+An alternative Docker deployment is also templated in this repository. Set up the `wrangler.toml` to point at api.solcast.com.au with desired scheduling and then `docker compose up -d --build`. It will have a self-signed certificate, so test (and bootstrap) with something like `curl -ksS "https://localhost:9443/rooftop_sites?format=json&api_key=my2E8APIykeysgoesxaheregkblahPuv"`.
+
 ## Behaviour
 
 - There are three schedule modes:
