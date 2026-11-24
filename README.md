@@ -164,7 +164,7 @@ SCHEDULE_MODE = "all_day"
 UPDATE_DIVISIONS = "9"
 
 # Additional forecasts: JSON array or comma-separated HH:MM or full ISO timestamps in UTC
-SCHEDULE_EXCEPTIONS_UTC = '["07:40:]'
+SCHEDULE_EXCEPTIONS_UTC = '["07:40"]'
 
 # Required for daylight and all_day modes
 LATITUDE = "-33.856784"
